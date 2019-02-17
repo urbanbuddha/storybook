@@ -46,10 +46,6 @@ module.exports = {
         './addons/storysource/src/loader',
         './app/**/src/server/**',
         './app/**/src/bin/**',
-        './dangerfile.js',
-        './lib/codemod',
-        './lib/core/src/server',
-        './lib/node-logger',
       ],
       presets: [
         [

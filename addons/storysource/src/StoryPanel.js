@@ -77,14 +77,16 @@ export default class StoryPanel extends Component {
         });
     };
 
-    onStoryRendered = (editor, monaco) => {
+    onStoryRendered = (editor) => {
         const {
             currentLocation: {
                 startLoc: { line: startLocLine },
             },
         } = this.state;
+        // eslint-disable-next-line no-underscore-dangle
         editor._revealLine(startLocLine);
-        console.log(editor)
+        // eslint-disable-next-line no-underscore-dangle
+        editor._actions["editor.action.jumpToBracket"]._run()
     };
 
     updateSource = (

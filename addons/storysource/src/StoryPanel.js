@@ -7,196 +7,202 @@ import { document } from 'global';
 import { SAVE_FILE_EVENT_ID, STORY_EVENT_ID } from './events';
 
 const getLocationKeys = locationsMap =>
-    locationsMap ?
-    Array.from(Object.keys(locationsMap)).sort(
+  locationsMap
+    ? Array.from(Object.keys(locationsMap)).sort(
         (key1, key2) => locationsMap[key1].startLoc.line - locationsMap[key2].startLoc.line
-    ) : [];
+      )
+    : [];
 
 export default class StoryPanel extends Component {
-    state = {
-        source: '// 🦄 Looking for it, hold on tight',
-        lineDecorations: [],
-        additionalStyles: css `
+  state = {
+    source: '// 🦄 Looking for it, hold on tight',
+    lineDecorations: [],
+    additionalStyles: css`
       background-color: #c6ff0040;
     `,
-    };
+  };
 
-    componentDidMount() {
+  componentDidMount() {
+    const { channel } = this.props;
+
+    channel.on(STORY_EVENT_ID, this.listener);
+  }
+
+  componentWillUnmount() {
+    const { channel } = this.props;
+
+    channel.removeListener(STORY_EVENT_ID, this.listener);
+  }
+
+  listener = ({ fileName, source, currentLocation, locationsMap }) => {
+    const locationsKeys = getLocationKeys(locationsMap);
+
+    this.setState({
+      fileName,
+      source,
+      currentLocation,
+      locationsMap, // eslint-disable-line react/no-unused-state
+      locationsKeys, // eslint-disable-line react/no-unused-state
+    });
+  };
+
+  editorDidMount = (editor, monaco) => {
+    editor.addAction({
+      id: 'save-the-selected-story-in-source-file',
+      label: '🇸 Save the selected story in source file',
+      keybindings: [
+        // eslint-disable-next-line no-bitwise
+        monaco.KeyMod.CtrlCmd | monaco.KeyCode.KEY_S,
+        // chord
+        monaco.KeyMod.chord(
+          // eslint-disable-next-line no-bitwise
+          monaco.KeyMod.CtrlCmd | monaco.KeyCode.KEY_X,
+          // eslint-disable-next-line no-bitwise
+          monaco.KeyMod.CtrlCmd | monaco.KeyCode.KEY_S
+        ),
+      ],
+      precondition: null,
+      keybindingContext: null,
+      contextMenuGroupId: 'navigation',
+      contextMenuOrder: 1.5,
+      run: thisEditor => {
+        const { fileName } = this.state;
         const { channel } = this.props;
+        const content = thisEditor.getModel().getValue();
+        channel.emit(SAVE_FILE_EVENT_ID, {
+          fileName,
+          content,
+        });
+        return null;
+      },
+    });
+  };
 
-        channel.on(STORY_EVENT_ID, this.listener);
+  onStoryRendered = editor => {
+    const {
+      currentLocation: {
+        startLoc: { line: startLocLine },
+      },
+    } = this.state;
+    // eslint-disable-next-line no-underscore-dangle
+    editor._revealLine(startLocLine);
+    // eslint-disable-next-line no-underscore-dangle
+    editor._actions['editor.action.jumpToBracket']._run();
+  };
+
+  updateSource = (
+    newSource,
+    {
+      changes: [
+        {
+          range: { startLineNumber, endLineNumber, endColumn, startColumn },
+          text,
+        },
+      ],
+    }
+  ) => {
+    const {
+      currentLocation: {
+        startLoc: { line: startLocLine, col: startLocCol },
+        endLoc: { line: endLocLine, col: endLocCol },
+      },
+    } = this.state;
+
+    const newEndLocLine =
+      endLocLine -
+      (endLineNumber - startLineNumber) /* selection range cut */ +
+      text.split('').filter(x => x === '\n')
+        .length; /* all the line feeds in the replacement text */
+    let newEndLocCol;
+    if (endLineNumber < endLocLine) {
+      /* edge column not moving if change occuring above */
+      newEndLocCol = endLocCol;
+    } else if (startLineNumber === endLineNumber && text.indexOf('\n') === -1) {
+      /* new character typed / removed */
+      newEndLocCol = endLocCol + text.length - (endColumn - startColumn);
+    } else {
+      /* the last line was probably merged with the previous one(s) */
+      newEndLocCol = newSource.split('\n')[newEndLocLine - 1].length - 1;
     }
 
-    componentWillUnmount() {
-        const { channel } = this.props;
+    this.setState({
+      source: newSource,
+      currentLocation: {
+        startLoc: { line: startLocLine, col: startLocCol },
+        endLoc: { line: newEndLocLine, col: newEndLocCol },
+      },
+    });
+  };
 
-        channel.removeListener(STORY_EVENT_ID, this.listener);
-    }
+  changePosition = (e, editor, monaco) => {
+    const {
+      additionalStyles,
+      lineDecorations,
+      currentLocation: { startLoc, endLoc },
+    } = this.state;
+    const highlightClassName = `css-${additionalStyles.name}`;
+    // probably a bug in monaco editor.
+    // we will prevent the first highlighting from gluing in the editor
+    const allDecorations = (lineDecorations || [])
+      // eslint-disable-next-line no-underscore-dangle
+      .concat(Object.keys(editor._modelData.viewModel.decorations._decorationsCache));
+    const newLineDecorations = editor.deltaDecorations(allDecorations, [
+      {
+        range: new monaco.Range(startLoc.line, startLoc.col + 1, endLoc.line, endLoc.col + 1),
+        options: { isWholeLine: false, inlineClassName: highlightClassName },
+      },
+    ]);
 
-    listener = ({ fileName, source, currentLocation, locationsMap }) => {
-        const locationsKeys = getLocationKeys(locationsMap);
+    if (
+      e.position.lineNumber < startLoc.line ||
+      (e.position.lineNumber === startLoc.line && e.position.column < startLoc.col)
+    )
+      editor.setPosition({
+        lineNumber: startLoc.line,
+        column: startLoc.col,
+      });
+    if (
+      e.position.lineNumber > endLoc.line ||
+      (e.position.lineNumber === endLoc.line && e.position.column > endLoc.col + 1)
+    )
+      editor.setPosition({
+        lineNumber: endLoc.line,
+        column: endLoc.col + 1,
+      });
 
-        this.setState({
-            fileName,
-            source,
-            currentLocation,
-            locationsMap, // eslint-disable-line react/no-unused-state
-            locationsKeys, // eslint-disable-line react/no-unused-state
-        });
-    };
+    if (newLineDecorations[0] !== lineDecorations[0])
+      this.setState({ lineDecorations: newLineDecorations });
+  };
 
-    editorDidMount = (editor, monaco) => {
-        editor.addAction({
-            id: 'save-the-selected-story-in-source-file',
-            label: '🇸 Save the selected story in source file',
-            keybindings: [
-                // eslint-disable-next-line no-bitwise
-                monaco.KeyMod.CtrlCmd | monaco.KeyCode.KEY_S,
-                // chord
-                monaco.KeyMod.chord(
-                    // eslint-disable-next-line no-bitwise
-                    monaco.KeyMod.CtrlCmd | monaco.KeyCode.KEY_X,
-                    // eslint-disable-next-line no-bitwise
-                    monaco.KeyMod.CtrlCmd | monaco.KeyCode.KEY_S
-                ),
-            ],
-            precondition: null,
-            keybindingContext: null,
-            contextMenuGroupId: 'navigation',
-            contextMenuOrder: 1.5,
-            run: thisEditor => {
-                const { fileName } = this.state;
-                const { channel } = this.props;
-                const content = thisEditor.getModel().getValue();
-                channel.emit(SAVE_FILE_EVENT_ID, {
-                    fileName,
-                    content,
-                });
-                return null;
-            },
-        });
-    };
+  render = () => {
+    const { channel, active } = this.props;
+    const { source, additionalStyles } = this.state;
 
-    onStoryRendered = (editor) => {
-        const {
-            currentLocation: {
-                startLoc: { line: startLocLine },
-            },
-        } = this.state;
-        // eslint-disable-next-line no-underscore-dangle
-        editor._revealLine(startLocLine);
-        // eslint-disable-next-line no-underscore-dangle
-        editor._actions["editor.action.jumpToBracket"]._run()
-    };
-
-    updateSource = (
-        newSource, {
-            changes: [{
-                range: { startLineNumber, endLineNumber, endColumn, startColumn },
-                text,
-            }, ],
+    return active ? (
+      <Editor
+        css={additionalStyles}
+        source={source}
+        onChange={this.updateSource}
+        componentDidMount={this.editorDidMount}
+        changePosition={this.changePosition}
+        onStoryRendered={this.onStoryRendered}
+        channel={channel}
+        resizeContainerReference={() =>
+          (document.getElementById('storybook-panel-root') || {}).parentNode
         }
-    ) => {
-        const {
-            currentLocation: {
-                startLoc: { line: startLocLine, col: startLocCol },
-                endLoc: { line: endLocLine, col: endLocCol },
-            },
-        } = this.state;
-
-        const newEndLocLine =
-            endLocLine -
-            (endLineNumber - startLineNumber) /* selection range cut */ +
-            text.split('').filter(x => x === '\n')
-            .length; /* all the line feeds in the replacement text */
-        let newEndLocCol;
-        if (endLineNumber < endLocLine) {
-            /* edge column not moving if change occuring above */
-            newEndLocCol = endLocCol;
-        } else if (startLineNumber === endLineNumber && text.indexOf('\n') === -1) {
-            /* new character typed / removed */
-            newEndLocCol = endLocCol + text.length - (endColumn - startColumn);
-        } else {
-            /* the last line was probably merged with the previous one(s) */
-            newEndLocCol = newSource.split('\n')[newEndLocLine - 1].length - 1;
-        }
-
-        this.setState({
-            source: newSource,
-            currentLocation: {
-                startLoc: { line: startLocLine, col: startLocCol },
-                endLoc: { line: newEndLocLine, col: newEndLocCol },
-            },
-        });
-    };
-
-    changePosition = (e, editor, monaco) => {
-        const {
-            additionalStyles,
-            lineDecorations,
-            currentLocation: { startLoc, endLoc },
-        } = this.state;
-        const highlightClassName = `css-${additionalStyles.name}`;
-        // probably a bug in monaco editor.
-        // we will prevent the first highlighting from gluing in the editor
-        const allDecorations = (lineDecorations || [])
-            // eslint-disable-next-line no-underscore-dangle
-            .concat(Object.keys(editor._modelData.viewModel.decorations._decorationsCache));
-        const newLineDecorations = editor.deltaDecorations(allDecorations, [{
-            range: new monaco.Range(startLoc.line, startLoc.col + 1, endLoc.line, endLoc.col + 1),
-            options: { isWholeLine: false, inlineClassName: highlightClassName },
-        }, ]);
-
-        if (
-            e.position.lineNumber < startLoc.line ||
-            (e.position.lineNumber === startLoc.line && e.position.column < startLoc.col)
-        )
-            editor.setPosition({
-                lineNumber: startLoc.line,
-                column: startLoc.col,
-            });
-        if (
-            e.position.lineNumber > endLoc.line ||
-            (e.position.lineNumber === endLoc.line && e.position.column > endLoc.col + 1)
-        )
-            editor.setPosition({
-                lineNumber: endLoc.line,
-                column: endLoc.col + 1,
-            });
-
-        if (newLineDecorations[0] !== lineDecorations[0])
-            this.setState({ lineDecorations: newLineDecorations });
-    };
-
-    render = () => {
-        const { channel, active } = this.props;
-        const { source, additionalStyles } = this.state;
-
-        return active ? ( <
-            Editor css = { additionalStyles }
-            source = { source }
-            onChange = { this.updateSource }
-            componentDidMount = { this.editorDidMount }
-            changePosition = { this.changePosition }
-            onStoryRendered = { this.onStoryRendered }
-            channel = { channel }
-            resizeContainerReference = {
-                () =>
-                (document.getElementById('storybook-panel-root') || {}).parentNode
-            }
-            />
-        ) : null;
-    };
+      />
+    ) : null;
+  };
 }
 
 StoryPanel.propTypes = {
-    active: PropTypes.bool.isRequired,
-    api: PropTypes.shape({
-        selectStory: PropTypes.func.isRequired,
-    }).isRequired,
-    channel: PropTypes.shape({
-        emit: PropTypes.func,
-        on: PropTypes.func,
-        removeListener: PropTypes.func,
-    }).isRequired,
+  active: PropTypes.bool.isRequired,
+  api: PropTypes.shape({
+    selectStory: PropTypes.func.isRequired,
+  }).isRequired,
+  channel: PropTypes.shape({
+    emit: PropTypes.func,
+    on: PropTypes.func,
+    removeListener: PropTypes.func,
+  }).isRequired,
 };

@@ -51,7 +51,7 @@ import { withBackgrounds } from '@storybook/addon-backgrounds';
 storiesOf('First Component', module)
   .addDecorator(withBackgrounds([
     { name: 'twitter', value: '#00aced' },
-    { name: 'facebook', value: '#3b5998" },
+    { name: 'facebook', value: '#3b5998' },
   ]))
   .add("First Button", () => <button>Click me</button>);
 `.trim();
